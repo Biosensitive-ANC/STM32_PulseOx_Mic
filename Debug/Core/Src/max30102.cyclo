@@ -1,0 +1,14 @@
+../Core/Src/max30102.c:47:19:MAX30102_WriteRegister	1
+../Core/Src/max30102.c:52:19:MAX30102_ReadRegister	1
+../Core/Src/max30102.c:57:9:MAX30102_ReadFIFO	1
+../Core/Src/max30102.c:62:9:MAX30102_Init	3
+../Core/Src/max30102.c:93:9:MAX30102_FIFO_Reset	3
+../Core/Src/max30102.c:110:9:MAX30102_setLedCurrent	4
+../Core/Src/max30102.c:129:9:MAX30102_DumpFifo	1
+../Core/Src/max30102.c:133:6:MAX30102_ProcessData	2
+../Core/Src/max30102.c:147:7:MAX30102_readTemperature	2
+../Core/Src/max30102.c:177:6:detectPulse	13
+../Core/Src/max30102.c:260:6:balanceIntesities	6
+../Core/Src/max30102.c:282:10:pulseOximeter_update	4
+../Core/Src/max30102.c:339:7:MAX30102_getBPM	1
+../Core/Src/max30102.c:343:7:MAX30102_getSPO2	1

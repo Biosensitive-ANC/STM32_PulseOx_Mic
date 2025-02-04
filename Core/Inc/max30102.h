@@ -8,10 +8,38 @@
 #ifndef INC_MAX30102_H_
 #define INC_MAX30102_H_
 
-/* USER CODE BEGIN Defines */
 
+/* USER CODE BEGIN Includes */
+#include "stdbool.h"
+#include "stm32f4xx_hal.h"
+#include "stm32f4xx_hal_i2c.h"
+/* USER CODE END Includes */
+
+
+/* USER CODE BEGIN Defines */
+/* Pulse detection parameters */
 #define MAX30102_SAMPLES_PER_BURST 30 // max of 32, minimum of 1
-#define MAX30102_SAMPLE_RATE 50 // Hz
+
+#define PULSE_MIN_THRESHOLD         100 //300 is good for finger, but for wrist you need like 20, and there is shitloads of noise
+#define PULSE_MAX_THRESHOLD         2000//2000
+#define PULSE_GO_DOWN_THRESHOLD     1
+
+#define PULSE_BPM_SAMPLE_SIZE       10 //Moving average size
+
+/* SpO2 parameters */
+#define RESET_SPO2_EVERY_N_PULSES     4
+
+/* Adjust RED LED current balancing*/
+#define MAGIC_ACCEPTABLE_INTENSITY_DIFF         65000
+#define RED_LED_CURRENT_ADJUSTMENT_MS           500
+
+#define DEFAULT_SAMPLING_RATE             MAX30100_SAMPLING_RATE_100HZ
+#define DEFAULT_LED_PULSE_WIDTH           MAX30100_PULSE_WIDTH_1600US_ADC_16
+
+#define DEFAULT_IR_LED_CURRENT            MAX30100_LED_CURRENT_50MA
+#define STARTING_RED_LED_CURRENT          MAX30100_LED_CURRENT_27_1MA
+
+
 
 #define MAX30102_ADDRESS 0x57   // MAX30102 I2C address
 
@@ -27,6 +55,9 @@
 #define REG_FIFO_DATA 0x07      // FIFO data register
 #define REG_INT1_EN 0x02    // interrupt enable register 1 of 2
 #define REG_FIFO_CONFIG 0x08    // fifo configuration register
+#define REG_TEMP_INTEGER		0x1F
+#define REG_TEMP_FRACTION		0x20
+#define REG_TEMP_CONFIG			0x21
 
 #define BIT_EN_A_FULL_INT 6 // bit for generating interrupt on the fifo almost full flag
 #define BIT_FIFO_A_FULL_VAL 0 // 3:0, value for generating almost full interrupt, 0 means FIFO fully utilized
@@ -35,74 +66,70 @@
 #define BIT_SPO2_SR 2
 #define BIT_LED_PW 0
 
-
+#define RED_LED	1
+#define IR_LED	2
 
 extern I2C_HandleTypeDef hi2c1;
 
+typedef struct{
+	uint32_t redLedRaw;
+	uint32_t irLedRaw;
+}FIFO_LED_DATA;
+
+typedef enum {
+    PULSE_IDLE,
+    PULSE_TRACE_UP,
+    PULSE_TRACE_DOWN
+} PULSE_STATE_MACHINE;
+
+typedef struct {
+  bool pulseDetected;
+  float heartBPM;
+  float irCardiogram;
+  float irDcValue;
+  float redDcValue;
+  float SpO2;
+  uint32_t lastBeatThreshold;
+  float dcFilteredIR;
+  float dcFilteredRed;
+  float temperature;
+}MAX30102;
+
+typedef enum LEDCurrent {
+    MAX30100_LED_CURRENT_0MA              = 0x00,
+    MAX30100_LED_CURRENT_4_4MA            = 0x01,
+    MAX30100_LED_CURRENT_7_6MA            = 0x02,
+    MAX30100_LED_CURRENT_11MA             = 0x03,
+    MAX30100_LED_CURRENT_14_2MA           = 0x04,
+    MAX30100_LED_CURRENT_17_4MA           = 0x05,
+    MAX30100_LED_CURRENT_20_8MA           = 0x06,
+    MAX30100_LED_CURRENT_24MA             = 0x07,
+    MAX30100_LED_CURRENT_27_1MA           = 0x08,
+    MAX30100_LED_CURRENT_30_6MA           = 0x09,
+    MAX30100_LED_CURRENT_33_8MA           = 0x0A,
+    MAX30100_LED_CURRENT_37MA             = 0x0B,
+    MAX30100_LED_CURRENT_40_2MA           = 0x0C,
+    MAX30100_LED_CURRENT_43_6MA           = 0x0D,
+    MAX30100_LED_CURRENT_46_8MA           = 0x0E,
+    MAX30100_LED_CURRENT_50MA             = 0x0F
+} LEDCurrent;
 /* USER CODE END Defines */
 
-/* USER CODE BEGIN 0 */
-// I2C write to register
-HAL_StatusTypeDef MAX30102_WriteRegister(uint8_t reg, uint8_t value) {
-    return HAL_I2C_Mem_Write(&hi2c1, (MAX30102_ADDRESS << 1), reg, I2C_MEMADD_SIZE_8BIT, &value, 1, 100);
-}
-
-// I2C read from register
-HAL_StatusTypeDef MAX30102_ReadRegister(uint8_t reg, uint8_t *value) {
-    return HAL_I2C_Mem_Read(&hi2c1, (MAX30102_ADDRESS << 1), reg, I2C_MEMADD_SIZE_8BIT, value, 1, 100);
-}
-
-// Read FIFO data
-uint8_t MAX30102_ReadFIFO(uint8_t *buffer, uint8_t length) {
-    return HAL_I2C_Mem_Read(&hi2c1, (MAX30102_ADDRESS << 1), REG_FIFO_DATA, I2C_MEMADD_SIZE_8BIT, buffer, length, 100);
-}
-
-// MAX30102 initialization
-uint8_t MAX30102_Init(void) {
-    uint8_t part_id = 0;
-
-    // Read MAX30102 ID to verify device presence
-    if (MAX30102_ReadRegister(REG_PART_ID, &part_id) != HAL_OK || part_id != 0x15) {
-        return 0;  // Device not found
-    }
-
-    // Reset MAX30102
-    MAX30102_WriteRegister(REG_MODE_CONFIG, 0b01000000);  // Reset MAX30102  (bit 6)
-    HAL_Delay(10);
-
-    // Configure SPO2 mode
-    MAX30102_WriteRegister(REG_MODE_CONFIG, 0b011 << BIT_MODE);  // Use heart rate mode only (or 0x07 to enable SPO2)
-    uint8_t spo2_bits = (0b01 << BIT_SPO2_ADC_RGE) |  (0b000 << BIT_SPO2_SR) | (0b11 << BIT_LED_PW);
-    MAX30102_WriteRegister(REG_SPO2_CONFIG, spo2_bits);  // Set ADC range and sampling rate
-
-    // Set LED brightness (0x24 represents medium brightness, adjustable)
-    MAX30102_WriteRegister(REG_LED1_PA, 0x24);  // LED1 (Red)
-    MAX30102_WriteRegister(REG_LED2_PA, 0x24);  // LED2 (Infrared)
-
-    // interrupts
-    MAX30102_WriteRegister(REG_FIFO_CONFIG, (32 - MAX30102_SAMPLES_PER_BURST) << BIT_FIFO_A_FULL_VAL);
-    MAX30102_WriteRegister(REG_INT1_EN, 1 << BIT_EN_A_FULL_INT);
-
-    return 1;  // Initialization successful
-}
-
-// FIFO clearing before data recording
-uint8_t MAX30102_FIFO_Reset(void) {
-	uint8_t part_id = 0;
-
-	// Read MAX30102 ID to verify device presence
-	if (MAX30102_ReadRegister(REG_PART_ID, &part_id) != HAL_OK || part_id != 0x15) {
-		return 0;  // Device not found
-	}
-
-	// set the FIFO read and write pointers to 0, and reset overflow counter to 0
-	MAX30102_WriteRegister(REG_FIFO_WR_PTR, 0x00);
-	MAX30102_WriteRegister(REG_OVF_COUNTER, 0x00);
-	MAX30102_WriteRegister(REG_FIFO_RD_PTR, 0x00);
-
-	return 1;
-}
-
-/* USER CODE END 0 */
+/* USER CODE BEGIN FP */
+HAL_StatusTypeDef MAX30102_WriteRegister(uint8_t reg, uint8_t value);
+HAL_StatusTypeDef MAX30102_ReadRegister(uint8_t reg, uint8_t *value);
+uint8_t MAX30102_ReadFIFO(uint8_t *buffer, uint8_t length);
+uint8_t MAX30102_Init(void);
+uint8_t MAX30102_FIFO_Reset(void);
+uint8_t MAX30102_setLedCurrent(uint8_t led, float currentLevel);
+uint8_t MAX30102_DumpFifo(void);
+void MAX30102_ProcessData(void);
+float MAX30102_readTemperature(void);
+MAX30102 pulseOximeter_update(FIFO_LED_DATA m_fifoData);
+bool detectPulse(float sensor_value);
+void balanceIntesities(float redLedDC, float IRLedDC);
+float MAX30102_getBPM(void);
+float MAX30102_getSPO2(void);
+/* USER CODE END FP */
 
 #endif /* INC_MAX30102_H_ */

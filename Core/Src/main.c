@@ -26,7 +26,6 @@
 #include "oled.h"
 #include "string.h"
 #include "system.h"
-#include "pulse_oximeter.h"
 #include "max30102.h"
 
 /* USER CODE END Includes */
@@ -40,9 +39,6 @@
 /* USER CODE BEGIN PD */
 #define BPM_SAMPLES_TO_KEEP (MAX30102_SAMPLE_RATE * 3) // want to detect HR at ~20bpm. translates to time of 3 seconds
 #define SPO2_SAMPLES_TO_KEEP 1 // maybe just average processed data (moving average)
-
-#define TRUE 1
-#define FALSE 0
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -63,12 +59,6 @@ UART_HandleTypeDef huart2;
 char message[64];
 
 volatile uint8_t pulseOximiterIntFlag = 0;
-uint8_t max30102_sensor_data[6 * MAX30102_SAMPLES_PER_BURST] = {0};
-uint32_t heartrate_led_data[BPM_SAMPLES_TO_KEEP] = {0};
-uint32_t heardrate_led_wr_ptr = 0;
-uint8_t heartrate_data_full = 0;
-
-
 
 /* USER CODE END PV */
 
@@ -179,37 +169,19 @@ int main(void)
 		 * switch between heart rate mode and spo2 mode for less overhead
 		 *
 		 */
-		if( pulseOximiterIntFlag && !heartrate_data_full)
+		if( pulseOximiterIntFlag)
 		{
-			if (MAX30102_ReadFIFO(max30102_sensor_data, 6 * MAX30102_SAMPLES_PER_BURST) == HAL_OK) {
+			if (MAX30102_DumpFifo() == HAL_OK) {
 
 				pulseOximiterIntFlag = 0;
 
-				for (int i = 0 ; i < MAX30102_SAMPLES_PER_BURST; i++) {
-					// check that the pointer location is valid
-					if (heardrate_led_wr_ptr >= BPM_SAMPLES_TO_KEEP) {
-						// if its not then break from this loop and say that we have full data.
-						heartrate_data_full = TRUE;
-						heardrate_led_wr_ptr = 0;
+				MAX30102_ProcessData();
+				float bpm = MAX30102_getBPM();
+				float spo2 = MAX30102_getSPO2();
 
-						break;
-					}
-					// led1 is red
-					// led2 is IR
-					// the first values we see are the oldest, so write them behind where we left off on the old data
-
-					// heart rate mode only needs red, so only save red data initially long term
-
-					heartrate_led_data[heardrate_led_wr_ptr] = (max30102_sensor_data[0] << 16) | (max30102_sensor_data[1] << 8) | max30102_sensor_data[2];
-					heardrate_led_wr_ptr++;
-				}
-				uint32_t ir_value  = (max30102_sensor_data[3] << 16) | (max30102_sensor_data[4] << 8) | max30102_sensor_data[5];
-
-				sprintf(message, "red: %d   IR: %d", (int)heartrate_led_data[heardrate_led_wr_ptr], (int)ir_value);
+				sprintf(message, "HR: %.2f   SPO2: %.2f", bpm, spo2);
 				CDC_Transmit_FS((uint8_t *)message, strlen(message));
 			}
-
-
 		}
 
 
@@ -217,12 +189,6 @@ int main(void)
 		currentMillis = millis();
 		if( currentMillis - lastMillis > 1000 )
 		{
-			if (heartrate_data_full) {
-				sprintf(message, "the HR data has been fully captured");
-				CDC_Transmit_FS((uint8_t *)message, strlen(message));
-				heartrate_data_full = FALSE;
-			}
-
 			HAL_GPIO_TogglePin(GPIOD, LD4_Pin | LD3_Pin | LD5_Pin | LD6_Pin);		//LED blinking
 
 			lastMillis = currentMillis;
@@ -527,8 +493,6 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 	if(GPIO_Pin == Pulse_Oximeter_Int_Pin)
 	{
 		pulseOximiterIntFlag = 1;
-
-		//spO2_registerDump();
 	}
 }
 /* USER CODE END 4 */
