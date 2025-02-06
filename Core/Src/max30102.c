@@ -18,7 +18,7 @@ DC_FILTER_T dcFilterRed = {0};
 MEAN_DIFF_FILTER_T meanDiffIR = {0};
 BUTTERWORTH_FILTER_T lpbFilterIR = {0};
 
-float currentTemperature = 0;
+float currentTemperature = 25.0;
 
 float currentBPM = 0;
 float valuesBPM[PULSE_BPM_SAMPLE_SIZE] = {0};
@@ -36,8 +36,6 @@ float currentSpO2Value = 0;
 uint8_t redLEDCurrent = 0;
 float lastREDLedCurrentCheck = 0;
 PULSE_STATE_MACHINE currentPulseDetectorState = PULSE_IDLE;
-
-LEDCurrent IrLedCurrent;
 
 uint8_t max30102_sensor_data[6 * MAX30102_SAMPLES_PER_BURST] = {0};
 
@@ -68,25 +66,33 @@ uint8_t MAX30102_Init(void) {
     }
 
     // Reset MAX30102
-    MAX30102_WriteRegister(REG_MODE_CONFIG, 0b01000000);  // Reset MAX30102  (bit 6)
+    MAX30102_WriteRegister(REG_MODE_CONFIG, (1 << 6));  // Reset MAX30102  (bit 6)
     HAL_Delay(10);
 
     // Configure SPO2 mode
     MAX30102_WriteRegister(REG_MODE_CONFIG, 0b011 << BIT_MODE);  // Use heart rate mode only (or 0x07 to enable SPO2)
-    uint8_t spo2_bits = (0b01 << BIT_SPO2_ADC_RGE) |  (0b000 << BIT_SPO2_SR) | (0b11 << BIT_LED_PW);
+    uint8_t spo2_bits = (0b01 << BIT_SPO2_ADC_RGE) |  (0b000 << BIT_SPO2_SR) | (0b01 << BIT_LED_PW); //pw of 11 browns out supply
     MAX30102_WriteRegister(REG_SPO2_CONFIG, spo2_bits);  // Set ADC range and sampling rate
 
     // Set LED brightness (0x24 represents medium brightness, adjustable)
-    MAX30102_setLedCurrent(RED_LED, 50);
-    MAX30102_setLedCurrent(IR_LED, 5);
+    redLEDCurrent = 30;
+    MAX30102_setLedCurrent(RED_LED, redLEDCurrent);
+    MAX30102_setLedCurrent(IR_LED, 10);
     //MAX30102_WriteRegister(REG_LED1_PA, 0x24);  // LED1 (Red)
     //MAX30102_WriteRegister(REG_LED2_PA, 0x24);  // LED2 (Infrared)
 
     // interrupts
-    MAX30102_WriteRegister(REG_FIFO_CONFIG, (32 - MAX30102_SAMPLES_PER_BURST) << BIT_FIFO_A_FULL_VAL);
+    MAX30102_WriteRegister(REG_FIFO_CONFIG, ((32 - MAX30102_SAMPLES_PER_BURST) << BIT_FIFO_A_FULL_VAL)); // max value is 15 min is 0
     MAX30102_WriteRegister(REG_INT1_EN, 1 << BIT_EN_A_FULL_INT);
 
+    MAX30102_ClearInterrupt();
+
     return 1;  // Initialization successful
+}
+
+void MAX30102_ClearInterrupt(void) {
+	uint8_t reset = 0;
+	MAX30102_ReadRegister(REG_STATUS, &reset); // clears initial interrupt
 }
 
 // FIFO clearing before data recording
@@ -102,6 +108,8 @@ uint8_t MAX30102_FIFO_Reset(void) {
 	MAX30102_WriteRegister(REG_FIFO_WR_PTR, 0x00);
 	MAX30102_WriteRegister(REG_OVF_COUNTER, 0x00);
 	MAX30102_WriteRegister(REG_FIFO_RD_PTR, 0x00);
+
+	MAX30102_ClearInterrupt();
 
 	return 1;
 }
@@ -127,24 +135,25 @@ uint8_t MAX30102_setLedCurrent(uint8_t led, float currentLevel)
 }
 
 uint8_t MAX30102_DumpFifo() {
-	return MAX30102_ReadFIFO(max30102_sensor_data, 6 * MAX30102_SAMPLES_PER_BURST);
+	uint8_t retval = MAX30102_ReadFIFO(max30102_sensor_data, 6 * MAX30102_SAMPLES_PER_BURST);
+	MAX30102_ClearInterrupt();
+	return retval;
 }
 
 void MAX30102_ProcessData() {
-	currentTemperature = MAX30102_readTemperature();
-
 	for (int i = 0 ; i < MAX30102_SAMPLES_PER_BURST; i++) {
 		// heart rate mode only needs red, so only save red data initially long term
 		FIFO_LED_DATA rawData = {0};
-		rawData.irLedRaw = (max30102_sensor_data[i+0] << 16) | (max30102_sensor_data[i+1] << 8) | max30102_sensor_data[i+2];
-		rawData.irLedRaw = (max30102_sensor_data[i+3] << 16) | (max30102_sensor_data[i+4] << 8) | max30102_sensor_data[i+5];
+		uint8_t n = i*6;
+		rawData.redLedRaw = ((max30102_sensor_data[n+0] << 16)) | (max30102_sensor_data[n+1] << 8) | max30102_sensor_data[n+2];
+		rawData.irLedRaw = 	((max30102_sensor_data[n+3] << 16)) | (max30102_sensor_data[n+4] << 8) | max30102_sensor_data[n+5];
 
 		pulseOximeter = pulseOximeter_update(rawData);
 
 	}
 }
 
-float MAX30102_readTemperature(void)
+void MAX30102_readTemperature(void)
 {
 	uint8_t tempNotDone = true;
 	uint8_t readResult;
@@ -170,7 +179,7 @@ float MAX30102_readTemperature(void)
 	// Conversion factor found in MAX30102 DataSheet
 	temperature = tempInteger + (tempFraction*0.0625);
 
-	return temperature;
+	currentTemperature = temperature;
 }
 
 
@@ -262,17 +271,17 @@ void balanceIntesities( float redLedDC, float IRLedDC )
 	uint32_t currentTime = millis();
   if( currentTime - lastREDLedCurrentCheck >= RED_LED_CURRENT_ADJUSTMENT_MS)
   {
-	  if( IRLedDC - redLedDC > MAGIC_ACCEPTABLE_INTENSITY_DIFF && redLEDCurrent < MAX30100_LED_CURRENT_50MA)
+	if( IRLedDC - redLedDC > MAGIC_ACCEPTABLE_INTENSITY_DIFF && redLEDCurrent < 51)
     {
       redLEDCurrent++;
       MAX30102_setLedCurrent(RED_LED, redLEDCurrent);
-      MAX30102_setLedCurrent(IR_LED, IrLedCurrent);
+      //MAX30102_setLedCurrent(IR_LED, IrLedCurrent);
     }
-    else if(redLedDC - IRLedDC > MAGIC_ACCEPTABLE_INTENSITY_DIFF && redLEDCurrent > MAX30100_LED_CURRENT_0MA)
+    else if(redLedDC - IRLedDC > MAGIC_ACCEPTABLE_INTENSITY_DIFF && redLEDCurrent > 0)
     {
       redLEDCurrent--;
       MAX30102_setLedCurrent(RED_LED, redLEDCurrent);
-      MAX30102_setLedCurrent(IR_LED, IrLedCurrent);
+      //MAX30102_setLedCurrent(IR_LED, IrLedCurrent);
     }
 
     lastREDLedCurrentCheck = millis();

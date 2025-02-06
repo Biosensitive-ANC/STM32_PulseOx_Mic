@@ -118,37 +118,20 @@ int main(void)
 
 	OLED_Init();                // Initialize the OLED display
 	OLED_Clear();               // Clear the OLED screen
-	OLED_ShowString(0, 0, "Hello, World!");  // Display "Hello, World!" at position (0, 0)
-	OLED_ShowString(0, 3, "STM32 OLED Demo"); // Display "STM32 OLED Demo" at position (0, 3)
+	HAL_Delay(100);
+
+    if (MAX30102_Init() != HAL_OK) {
+        OLED_ShowString(0, 0, "MAX30102 OK");
+    } else {
+        OLED_ShowString(0, 0, "MAX30102 ERROR");
+    }
 
 	long currentMillis = 0;
 	long lastMillis = 0;
 
-	/*
-	pulseOximeter_resetRegisters();
-	// Setup up MAX30102 FIFO registers
-	pulseOximeter_initFifo();
-	// Set sampling rate to 100MSPS and
-	// pulse width to 411us
-	// See DataSheet for available
-	// sampling rate/pulse width combinations
-	pulseOximeter_setSampleRate(_100SPS);
-	pulseOximeter_setPulseWidth(_411_US);
-	// Set Red/IR Led current
-	// 0 - 51mA maximum
-	pulseOximeter_setLedCurrent(RED_LED, 50);
-	pulseOximeter_setLedCurrent(IR_LED, 5);
-	// Set FIFO registers to zero
-	pulseOximeter_resetFifo();
-	// Set the Measurement Mode
-	// Measurement Modes:
-	// HEART_RATE - only Red Led active
-	// SPO2 - Both IR & Red Led active
-	// MULTI_LED - Both led's active (timing can be configured; see DataSheet)
-	pulseOximeter_setMeasurementMode(SPO2);
-	*/
-
 	currentMillis = millis();
+
+	//MAX30102_readTemperature();
 
   /* USER CODE END 2 */
 
@@ -169,27 +152,59 @@ int main(void)
 		 * switch between heart rate mode and spo2 mode for less overhead
 		 *
 		 */
-		if( pulseOximiterIntFlag)
+		/*
+		int count = 0;
+		while (count < 10) {
+			if( pulseOximiterIntFlag )
+			{
+				if (MAX30102_DumpFifo() == HAL_OK) {
+
+					pulseOximiterIntFlag = 0;
+
+					count++;
+
+					MAX30102_ProcessData();
+				}
+			}
+		}
+
+		while(!pulseOximiterIntFlag) {}
+			*/
+
+
+		if( pulseOximiterIntFlag )
 		{
 			if (MAX30102_DumpFifo() == HAL_OK) {
 
 				pulseOximiterIntFlag = 0;
 
 				MAX30102_ProcessData();
-				float bpm = MAX30102_getBPM();
-				float spo2 = MAX30102_getSPO2();
-
-				sprintf(message, "HR: %.2f   SPO2: %.2f", bpm, spo2);
-				CDC_Transmit_FS((uint8_t *)message, strlen(message));
 			}
 		}
 
 
+
 		// Display the data over the built in USB every second
 		currentMillis = millis();
-		if( currentMillis - lastMillis > 1000 )
+		if( currentMillis - lastMillis > 5000 )
 		{
+			//MAX30102_DumpFifo();
+			//MAX30102_ProcessData();
+
+
+			float bpm = MAX30102_getBPM();
+			float spo2 = MAX30102_getSPO2();
+			//sprintf(message, "HR: %.2f   SPO2: %.2f \n", bpm, spo2);
+			//CDC_Transmit_FS((uint8_t *)message, strlen(message));
+
 			HAL_GPIO_TogglePin(GPIOD, LD4_Pin | LD3_Pin | LD5_Pin | LD6_Pin);		//LED blinking
+
+			OLED_Clear();
+			sprintf(message, "%.2f   %.2f", bpm, spo2);
+			//sprintf(message, "%.2f", );
+			OLED_ShowString(0, 0, message);
+			//MAX30102_readTemperature();
+
 
 			lastMillis = currentMillis;
 		}
