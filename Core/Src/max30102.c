@@ -10,6 +10,17 @@
 #include "filter.h"
 #include "math.h"
 
+const uint8_t uch_spo2_table[184]={ 95, 95, 95, 96, 96, 96, 97, 97, 97, 97, 97, 98, 98, 98, 98, 98, 99, 99, 99, 99,
+              99, 99, 99, 99, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100,
+              100, 100, 100, 100, 99, 99, 99, 99, 99, 99, 99, 99, 98, 98, 98, 98, 98, 98, 97, 97,
+              97, 97, 96, 96, 96, 96, 95, 95, 95, 94, 94, 94, 93, 93, 93, 92, 92, 92, 91, 91,
+              90, 90, 89, 89, 89, 88, 88, 87, 87, 86, 86, 85, 85, 84, 84, 83, 82, 82, 81, 81,
+              80, 80, 79, 78, 78, 77, 76, 76, 75, 74, 74, 73, 72, 72, 71, 70, 69, 69, 68, 67,
+              66, 66, 65, 64, 63, 62, 62, 61, 60, 59, 58, 57, 56, 56, 55, 54, 53, 52, 51, 50,
+              49, 48, 47, 46, 45, 44, 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 31, 30, 29,
+              28, 27, 26, 25, 23, 22, 21, 20, 19, 17, 16, 15, 14, 12, 11, 10, 9, 7, 6, 5,
+              3, 2, 1 } ;
+
 MAX30102 pulseOximeter = {0};
 FIFO_LED_DATA fifoData = {0};
 
@@ -34,7 +45,7 @@ uint16_t pulsesDetected = 0;
 float currentSpO2Value = 0;
 
 uint8_t redLEDCurrent = 0;
-float lastREDLedCurrentCheck = 0;
+long lastREDLedCurrentCheck = 0;
 PULSE_STATE_MACHINE currentPulseDetectorState = PULSE_IDLE;
 
 uint8_t max30102_sensor_data[6 * MAX30102_SAMPLES_PER_BURST] = {0};
@@ -75,9 +86,9 @@ uint8_t MAX30102_Init(void) {
     MAX30102_WriteRegister(REG_SPO2_CONFIG, spo2_bits);  // Set ADC range and sampling rate
 
     // Set LED brightness (0x24 represents medium brightness, adjustable)
-    redLEDCurrent = 30;
+    redLEDCurrent = 50;
     MAX30102_setLedCurrent(RED_LED, redLEDCurrent);
-    MAX30102_setLedCurrent(IR_LED, 10);
+    MAX30102_setLedCurrent(IR_LED, redLEDCurrent);
     //MAX30102_WriteRegister(REG_LED1_PA, 0x24);  // LED1 (Red)
     //MAX30102_WriteRegister(REG_LED2_PA, 0x24);  // LED2 (Infrared)
 
@@ -115,9 +126,8 @@ uint8_t MAX30102_FIFO_Reset(void) {
 }
 
 
-uint8_t MAX30102_setLedCurrent(uint8_t led, float currentLevel)
+uint8_t MAX30102_setLedCurrent(uint8_t led, uint8_t currentLevel)
 {
-	uint8_t value = 0;
 	uint8_t ledRegister = 0;
 
 	switch(led){
@@ -125,10 +135,7 @@ uint8_t MAX30102_setLedCurrent(uint8_t led, float currentLevel)
 	case IR_LED:	ledRegister = REG_LED2_PA; break;
 	}
 
-	// slope derived from MAX30102 DataSheet
-	value = (uint8_t)(5.0 * currentLevel);
-
-	if( MAX30102_WriteRegister(ledRegister, value) != HAL_OK){
+	if( MAX30102_WriteRegister(ledRegister, currentLevel) != HAL_OK){
 		return 0;
 	}
 	return 1;
@@ -273,15 +280,13 @@ void balanceIntesities( float redLedDC, float IRLedDC )
   {
 	if( IRLedDC - redLedDC > MAGIC_ACCEPTABLE_INTENSITY_DIFF && redLEDCurrent < 51)
     {
-      redLEDCurrent++;
-      MAX30102_setLedCurrent(RED_LED, redLEDCurrent);
-      //MAX30102_setLedCurrent(IR_LED, IrLedCurrent);
+		redLEDCurrent++;
+		MAX30102_setLedCurrent(RED_LED, redLEDCurrent);
     }
     else if(redLedDC - IRLedDC > MAGIC_ACCEPTABLE_INTENSITY_DIFF && redLEDCurrent > 0)
     {
-      redLEDCurrent--;
-      MAX30102_setLedCurrent(RED_LED, redLEDCurrent);
-      //MAX30102_setLedCurrent(IR_LED, IrLedCurrent);
+    	redLEDCurrent--;
+    	MAX30102_setLedCurrent(RED_LED, redLEDCurrent);
     }
 
     lastREDLedCurrentCheck = millis();
@@ -313,19 +318,22 @@ MAX30102 pulseOximeter_update(FIFO_LED_DATA m_fifoData)
 	redACValueSqSum += dcFilterRed.result * dcFilterRed.result;
 	samplesRecorded++;
 
-	if( detectPulse( lpbFilterIR.result ) && samplesRecorded > 0 )
+	if( detectPulse( lpbFilterIR.result ) &&  samplesRecorded > 0 )
 	{
 		result.pulseDetected=true;
 		pulsesDetected++;
 
-		float ratioRMS = log( sqrt(redACValueSqSum/samplesRecorded) ) / log( sqrt(irACValueSqSum/samplesRecorded) );
-
-		//This is my adjusted standard model, so it shows 0.89 as 94% saturation. It is probably far from correct, requires proper empircal calibration
-		currentSpO2Value = 110.0 - 18.0 * ratioRMS;
-		result.SpO2 = currentSpO2Value;
-
-		if( pulsesDetected % RESET_SPO2_EVERY_N_PULSES == 0)
+		if( (pulsesDetected % RESET_SPO2_EVERY_N_PULSES == 0) )
 		{
+			float ratioRMS = log( sqrt(redACValueSqSum/samplesRecorded) ) / log( sqrt(irACValueSqSum/samplesRecorded) );
+			currentSpO2Value = 114.0 - 18.0 * ratioRMS;
+
+			//uint8_t ratio =  ((redACValueSqSum/samplesRecorded) * 100) / (irACValueSqSum/samplesRecorded);
+			//if (ratio > 183) ratio = 183;
+			//currentSpO2Value = uch_spo2_table[ratio];
+
+			result.SpO2 = currentSpO2Value;
+
 			irACValueSqSum = 0;
 			redACValueSqSum = 0;
 			samplesRecorded = 0;

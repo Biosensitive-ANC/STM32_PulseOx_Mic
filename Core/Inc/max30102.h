@@ -30,8 +30,8 @@
 #define RESET_SPO2_EVERY_N_PULSES     4
 
 /* Adjust RED LED current balancing*/
-#define MAGIC_ACCEPTABLE_INTENSITY_DIFF         65000
-#define RED_LED_CURRENT_ADJUSTMENT_MS           500
+#define MAGIC_ACCEPTABLE_INTENSITY_DIFF         10000
+#define RED_LED_CURRENT_ADJUSTMENT_MS           100
 
 
 
@@ -90,24 +90,6 @@ typedef struct {
   float temperature;
 }MAX30102;
 
-typedef enum LEDCurrent {
-    MAX30100_LED_CURRENT_0MA              = 0x00,
-    MAX30100_LED_CURRENT_4_4MA            = 0x01,
-    MAX30100_LED_CURRENT_7_6MA            = 0x02,
-    MAX30100_LED_CURRENT_11MA             = 0x03,
-    MAX30100_LED_CURRENT_14_2MA           = 0x04,
-    MAX30100_LED_CURRENT_17_4MA           = 0x05,
-    MAX30100_LED_CURRENT_20_8MA           = 0x06,
-    MAX30100_LED_CURRENT_24MA             = 0x07,
-    MAX30100_LED_CURRENT_27_1MA           = 0x08,
-    MAX30100_LED_CURRENT_30_6MA           = 0x09,
-    MAX30100_LED_CURRENT_33_8MA           = 0x0A,
-    MAX30100_LED_CURRENT_37MA             = 0x0B,
-    MAX30100_LED_CURRENT_40_2MA           = 0x0C,
-    MAX30100_LED_CURRENT_43_6MA           = 0x0D,
-    MAX30100_LED_CURRENT_46_8MA           = 0x0E,
-    MAX30100_LED_CURRENT_50MA             = 0x0F
-} LEDCurrent;
 /* USER CODE END Defines */
 
 /* USER CODE BEGIN FP */
@@ -117,7 +99,7 @@ uint8_t MAX30102_ReadFIFO(uint8_t *buffer, uint8_t length);
 uint8_t MAX30102_Init(void);
 void MAX30102_ClearInterrupt(void);
 uint8_t MAX30102_FIFO_Reset(void);
-uint8_t MAX30102_setLedCurrent(uint8_t led, float currentLevel);
+uint8_t MAX30102_setLedCurrent(uint8_t led, uint8_t currentLevel);
 uint8_t MAX30102_DumpFifo(void);
 void MAX30102_ProcessData(void);
 void MAX30102_readTemperature(void);
