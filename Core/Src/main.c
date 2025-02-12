@@ -212,9 +212,16 @@ int main(void)
 			HAL_GPIO_TogglePin(GPIOD, LD4_Pin | LD3_Pin | LD5_Pin | LD6_Pin);		//LED blinking
 
 			OLED_Clear();
-			sprintf(message, "%.2f   %.2f", bpm, spo2);
+			sprintf(message, "BPM: %.2f", bpm);
 			//sprintf(message, "%.2f", );
+
 			OLED_ShowString(0, 0, message);
+
+
+			sprintf(message, "SpO2: %.2f", spo2);
+			 			//sprintf(message, "%.2f", );
+
+			OLED_ShowString(0, 2, message);
 			//MAX30102_readTemperature();
 
 			// Microphone Stuff
@@ -247,10 +254,10 @@ int main(void)
 
 			   // Display on OLED
 			   sprintf(adc_msg, "Noise: %lu", movingAvg /*newValue*/ );
-			   OLED_ShowString(0, 2, adc_msg);
+			   OLED_ShowString(0, 4, adc_msg);
 
 		       sprintf(adc_msg, "RMS: %lu", rmsValue);
-		       OLED_ShowString(0, 4, adc_msg);
+		       OLED_ShowString(0, 6, adc_msg);
 
 			   // Update buffer index
 			   index = (index + 1) % WINDOW_SIZE;
