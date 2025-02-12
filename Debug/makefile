@@ -64,8 +64,8 @@ all: main-build
 main-build: STM32_project.elf secondary-outputs
 
 # Tool invocations
-STM32_project.elf STM32_project.map: $(OBJS) $(USER_OBJS) D:\UW\EE475\STM32_project\STM32F407VGTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "STM32_project.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"D:\UW\EE475\STM32_project\STM32F407VGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="STM32_project.map" -Wl,--gc-sections -static -u _printf_float --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+STM32_project.elf STM32_project.map: $(OBJS) $(USER_OBJS) C:\Users\keith\OneDrive\ -\ UW\Documents\School\UW\ 2024-2025\EE\ 542\Heartrate\ Sensor\STM32_pulseOx\STM32F407VGTX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "STM32_project.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m4 -T"C:\Users\keith\OneDrive - UW\Documents\School\UW 2024-2025\EE 542\Heartrate Sensor\STM32_pulseOx\STM32F407VGTX_FLASH.ld" --specs=nosys.specs -Wl,-Map="STM32_project.map" -Wl,--gc-sections -static -u _printf_float --specs=nano.specs -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 

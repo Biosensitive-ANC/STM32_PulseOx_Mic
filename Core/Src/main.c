@@ -28,6 +28,8 @@
 #include "system.h"
 #include "max30102.h"
 
+#include <math.h>  // Include for sqrt function for RMS
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -39,6 +41,8 @@
 /* USER CODE BEGIN PD */
 #define BPM_SAMPLES_TO_KEEP (MAX30102_SAMPLE_RATE * 3) // want to detect HR at ~20bpm. translates to time of 3 seconds
 #define SPO2_SAMPLES_TO_KEEP 1 // maybe just average processed data (moving average)
+
+#define WINDOW_SIZE 10 // window size to average noise level
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -47,6 +51,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+ADC_HandleTypeDef hadc1;
+
 I2C_HandleTypeDef hi2c1;
 
 I2S_HandleTypeDef hi2s3;
@@ -69,6 +75,7 @@ static void MX_I2C1_Init(void);
 static void MX_I2S3_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_ADC1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -112,6 +119,7 @@ int main(void)
   MX_SPI1_Init();
   MX_USART2_UART_Init();
   MX_USB_DEVICE_Init();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
 
 	//uint8_t message[] = "Hello PC! STM32 is sending data...\r\n";
@@ -131,7 +139,11 @@ int main(void)
 
 	currentMillis = millis();
 
-	//MAX30102_readTemperature();
+	uint32_t adcBuffer[WINDOW_SIZE] = {0};
+	uint32_t index = 0;
+	uint32_t sum = 0; // For rolling window
+	uint64_t sumOfSquares = 0;  // Stores sum of squares
+	char adc_msg[20]; // Buffer to hold the string
 
   /* USER CODE END 2 */
 
@@ -205,7 +217,45 @@ int main(void)
 			OLED_ShowString(0, 0, message);
 			//MAX30102_readTemperature();
 
+			// Microphone Stuff
+			// Read new ADC value
+			HAL_ADC_Start(&hadc1);  // Start ADC conversion
+			uint32_t newValue = 0;
 
+			if (HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY) == HAL_OK) {
+			    newValue = HAL_ADC_GetValue(&hadc1);  // Read ADC value
+			}
+
+			HAL_ADC_Stop(&hadc1);  // Stop ADC to avoid unnecessary power usage
+
+			   // Update rolling sum
+			   sum -= adcBuffer[index];  // Remove oldest value
+			   sumOfSquares -= adcBuffer[index] * adcBuffer[index];
+
+			   adcBuffer[index] = newValue;  // Store new value
+			   sum += newValue;  // Add new value to sum
+
+			   // RMS
+			   sumOfSquares += newValue * newValue;  // Square the new value and add
+
+
+			   // Compute moving average
+			   uint32_t movingAvg = sum / WINDOW_SIZE;
+
+		       // Compute RMS
+		       uint32_t rmsValue = sqrt(sumOfSquares / WINDOW_SIZE);
+
+			   // Display on OLED
+			   sprintf(adc_msg, "Noise: %lu", movingAvg /*newValue*/ );
+			   OLED_ShowString(0, 2, adc_msg);
+
+		       sprintf(adc_msg, "RMS: %lu", rmsValue);
+		       OLED_ShowString(0, 4, adc_msg);
+
+			   // Update buffer index
+			   index = (index + 1) % WINDOW_SIZE;
+
+			HAL_GPIO_TogglePin(GPIOD, LD4_Pin | LD3_Pin | LD5_Pin | LD6_Pin);
 			lastMillis = currentMillis;
 		}
 
@@ -261,6 +311,58 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief ADC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC1_Init(void)
+{
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+
+  /* USER CODE END ADC1_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC1_Init 1 */
+
+  /* USER CODE END ADC1_Init 1 */
+
+  /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
+  */
+  hadc1.Instance = ADC1;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+  hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc1.Init.ScanConvMode = DISABLE;
+  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.DMAContinuousRequests = DISABLE;
+  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_1;
+  sConfig.Rank = 1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
 }
 
 /**
