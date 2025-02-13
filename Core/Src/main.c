@@ -43,6 +43,7 @@
 #define SPO2_SAMPLES_TO_KEEP 1 // maybe just average processed data (moving average)
 
 #define WINDOW_SIZE 10 // window size to average noise level
+#define DISP_REFRESH_MS 3000
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -136,6 +137,8 @@ int main(void)
 
 	long currentMillis = 0;
 	long lastMillis = 0;
+	long lastMillisMic = 0;
+
 
 	currentMillis = millis();
 
@@ -151,38 +154,6 @@ int main(void)
   /* USER CODE BEGIN WHILE */
 	while (1)
 	{
-		/*
-		 * TODO
-		 * make sure the code below works
-		 * modify the library to include the pulseOximeter_update function, comment out spo2 ballancing
-		 * - set intensities equal to the ones default in the library
-		 * - remove the data storage functionality, will be taken care of by the pulse detector function. or not it doesnt matter
-		 * - create temperature reading function
-		 * - create led set current function
-		 * process data to get heart rate and spo2
-		 * create function to get spo2 from raw led data
-		 * switch between heart rate mode and spo2 mode for less overhead
-		 *
-		 */
-		/*
-		int count = 0;
-		while (count < 10) {
-			if( pulseOximiterIntFlag )
-			{
-				if (MAX30102_DumpFifo() == HAL_OK) {
-
-					pulseOximiterIntFlag = 0;
-
-					count++;
-
-					MAX30102_ProcessData();
-				}
-			}
-		}
-
-		while(!pulseOximiterIntFlag) {}
-			*/
-
 
 		if( pulseOximiterIntFlag )
 		{
@@ -196,14 +167,44 @@ int main(void)
 
 
 
-		// Display the data over the built in USB every second
 		currentMillis = millis();
-		if( currentMillis - lastMillis > 5000 )
+		if( currentMillis - lastMillisMic > DISP_REFRESH_MS / WINDOW_SIZE)
+			{
+			// Microphone Stuff
+			// Read new ADC value
+			HAL_ADC_Start(&hadc1);  // Start ADC conversion
+			uint32_t newValue = 0;
+
+			if (HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY) == HAL_OK) {
+				newValue = HAL_ADC_GetValue(&hadc1);  // Read ADC value
+			}
+
+			HAL_ADC_Stop(&hadc1);  // Stop ADC to avoid unnecessary power usage
+
+			// Update rolling sum
+			sum -= adcBuffer[index];  // Remove oldest value
+			sumOfSquares -= adcBuffer[index] * adcBuffer[index];
+
+			adcBuffer[index] = newValue;  // Store new value
+			sum += newValue;  // Add new value to sum
+
+			// RMS
+			sumOfSquares += newValue * newValue; // Square the new value and add
+
+			// Update buffer index
+			index = (index + 1) % WINDOW_SIZE;
+
+			lastMillisMic = currentMillis;
+		}
+
+
+
+
+		// Display the data over the built in USB every 5 seconds
+		currentMillis = millis();
+
+		if( currentMillis - lastMillis > DISP_REFRESH_MS )
 		{
-			//MAX30102_DumpFifo();
-			//MAX30102_ProcessData();
-
-
 			float bpm = MAX30102_getBPM();
 			float spo2 = MAX30102_getSPO2();
 			//sprintf(message, "HR: %.2f   SPO2: %.2f \n", bpm, spo2);
@@ -211,60 +212,37 @@ int main(void)
 
 			HAL_GPIO_TogglePin(GPIOD, LD4_Pin | LD3_Pin | LD5_Pin | LD6_Pin);		//LED blinking
 
-			OLED_Clear();
-			sprintf(message, "BPM: %.2f", bpm);
+			sprintf(message, "BPM: %.2f     ", bpm);
 			//sprintf(message, "%.2f", );
 
 			OLED_ShowString(0, 0, message);
 
 
-			sprintf(message, "SpO2: %.2f", spo2);
+			sprintf(message, "SpO2: %.2f     ", spo2);
 			 			//sprintf(message, "%.2f", );
 
 			OLED_ShowString(0, 2, message);
 			//MAX30102_readTemperature();
 
-			// Microphone Stuff
-			// Read new ADC value
-			HAL_ADC_Start(&hadc1);  // Start ADC conversion
-			uint32_t newValue = 0;
+			// Compute moving average
+			uint32_t movingAvg = sum / WINDOW_SIZE;
 
-			if (HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY) == HAL_OK) {
-			    newValue = HAL_ADC_GetValue(&hadc1);  // Read ADC value
-			}
+			// Compute RMS
+			uint32_t rmsValue = sqrt(sumOfSquares / WINDOW_SIZE);
 
-			HAL_ADC_Stop(&hadc1);  // Stop ADC to avoid unnecessary power usage
+			// Display on OLED
+			sprintf(adc_msg, "Noise: %lu", movingAvg);
+			OLED_ShowString(0, 4, adc_msg);
 
-			   // Update rolling sum
-			   sum -= adcBuffer[index];  // Remove oldest value
-			   sumOfSquares -= adcBuffer[index] * adcBuffer[index];
-
-			   adcBuffer[index] = newValue;  // Store new value
-			   sum += newValue;  // Add new value to sum
-
-			   // RMS
-			   sumOfSquares += newValue * newValue;  // Square the new value and add
-
-
-			   // Compute moving average
-			   uint32_t movingAvg = sum / WINDOW_SIZE;
-
-		       // Compute RMS
-		       uint32_t rmsValue = sqrt(sumOfSquares / WINDOW_SIZE);
-
-			   // Display on OLED
-			   sprintf(adc_msg, "Noise: %lu", movingAvg /*newValue*/ );
-			   OLED_ShowString(0, 4, adc_msg);
-
-		       sprintf(adc_msg, "RMS: %lu", rmsValue);
-		       OLED_ShowString(0, 6, adc_msg);
-
-			   // Update buffer index
-			   index = (index + 1) % WINDOW_SIZE;
+			sprintf(adc_msg, "RMS: %lu", rmsValue);
+			OLED_ShowString(0, 6, adc_msg);
 
 			HAL_GPIO_TogglePin(GPIOD, LD4_Pin | LD3_Pin | LD5_Pin | LD6_Pin);
 			lastMillis = currentMillis;
+
 		}
+
+
 
 
 

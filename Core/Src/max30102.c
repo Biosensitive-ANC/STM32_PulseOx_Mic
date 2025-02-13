@@ -9,6 +9,7 @@
 #include "system.h"
 #include "filter.h"
 #include "math.h"
+#include "stdlib.h"
 
 const uint8_t uch_spo2_table[184]={ 95, 95, 95, 96, 96, 96, 97, 97, 97, 97, 97, 98, 98, 98, 98, 98, 99, 99, 99, 99,
               99, 99, 99, 99, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100,
@@ -32,11 +33,9 @@ BUTTERWORTH_FILTER_T lpbFilterIR = {0};
 float currentTemperature = 25.0;
 
 float currentBPM = 0;
-float valuesBPM[PULSE_BPM_SAMPLE_SIZE] = {0};
+int valuesBPM[PULSE_BPM_SAMPLE_SIZE] = {0};
 float valuesBPMSum = 0;
-uint8_t valuesBPMCount = 0;
 uint8_t bpmIndex = 0;
-uint32_t lastBeatThreshold = 0;
 
 float irACValueSqSum = 0;
 float redACValueSqSum = 0;
@@ -82,7 +81,7 @@ uint8_t MAX30102_Init(void) {
 
     // Configure SPO2 mode
     MAX30102_WriteRegister(REG_MODE_CONFIG, 0b011 << BIT_MODE);  // Use heart rate mode only (or 0x07 to enable SPO2)
-    uint8_t spo2_bits = (0b01 << BIT_SPO2_ADC_RGE) |  (0b000 << BIT_SPO2_SR) | (0b01 << BIT_LED_PW); //pw of 11 browns out supply
+    uint8_t spo2_bits = (0b01 << BIT_SPO2_ADC_RGE) |  (0b001 << BIT_SPO2_SR) | (0b01 << BIT_LED_PW); //pw of 11 browns out supply
     MAX30102_WriteRegister(REG_SPO2_CONFIG, spo2_bits);  // Set ADC range and sampling rate
 
     // Set LED brightness (0x24 represents medium brightness, adjustable)
@@ -93,7 +92,7 @@ uint8_t MAX30102_Init(void) {
     //MAX30102_WriteRegister(REG_LED2_PA, 0x24);  // LED2 (Infrared)
 
     // interrupts
-    MAX30102_WriteRegister(REG_FIFO_CONFIG, ((32 - MAX30102_SAMPLES_PER_BURST) << BIT_FIFO_A_FULL_VAL)); // max value is 15 min is 0
+    MAX30102_WriteRegister(REG_FIFO_CONFIG, (0b000 << BIT_SMP_AVG) | ((32 - MAX30102_SAMPLES_PER_BURST) << BIT_FIFO_A_FULL_VAL)); // max value is 15 min is 0
     MAX30102_WriteRegister(REG_INT1_EN, 1 << BIT_EN_A_FULL_INT);
 
     MAX30102_ClearInterrupt();
@@ -152,8 +151,8 @@ void MAX30102_ProcessData() {
 		// heart rate mode only needs red, so only save red data initially long term
 		FIFO_LED_DATA rawData = {0};
 		uint8_t n = i*6;
-		rawData.redLedRaw = ((max30102_sensor_data[n+0] << 16)) | (max30102_sensor_data[n+1] << 8) | max30102_sensor_data[n+2];
-		rawData.irLedRaw = 	((max30102_sensor_data[n+3] << 16)) | (max30102_sensor_data[n+4] << 8) | max30102_sensor_data[n+5];
+		rawData.redLedRaw = ((max30102_sensor_data[n+0] << 16) | (max30102_sensor_data[n+1] << 8) | max30102_sensor_data[n+2]);
+		rawData.irLedRaw = 	((max30102_sensor_data[n+3] << 16) | (max30102_sensor_data[n+4] << 8) | max30102_sensor_data[n+5]);
 
 		pulseOximeter = pulseOximeter_update(rawData);
 
@@ -189,24 +188,45 @@ void MAX30102_readTemperature(void)
 	currentTemperature = temperature;
 }
 
+// Comparison function for qsort
+int compare(const void *a, const void *b) {
+    return (*(int*)a - *(int*)b);
+}
+
+// Function to calculate the median
+double getMedian(int arr[], int size) {
+    // Sort the array
+    qsort(arr, size, sizeof(int), compare);
+
+    return arr[size / 2];
+}
+/*
+int main() {
+    int arr[] = {7, 2, 5, 10, 4};
+    int size = sizeof(arr) / sizeof(arr[0]);
+
+    double median = getMedian(arr, size);
+    printf("Median: %.2f\n", median);
+
+    return 0;
+}*/
+
 
 bool detectPulse(float sensor_value)
 {
   static float prev_sensor_value = 0;
   static uint8_t values_went_down = 0;
-  static uint32_t currentBeat = 0;
-  static uint32_t lastBeat = 0;
+  static uint16_t currentBeatIndex = 0;
 
   if(sensor_value > PULSE_MAX_THRESHOLD)
   {
     currentPulseDetectorState = PULSE_IDLE;
     prev_sensor_value = 0;
-    lastBeat = 0;
-    currentBeat = 0;
     values_went_down = 0;
-    lastBeatThreshold = 0;
     return false;
   }
+
+  currentBeatIndex++;
 
   switch(currentPulseDetectorState)
   {
@@ -218,36 +238,20 @@ bool detectPulse(float sensor_value)
       break;
 
     case PULSE_TRACE_UP:
-      if(sensor_value > prev_sensor_value)
+      if (!(sensor_value > prev_sensor_value))
       {
-        currentBeat = millis();
-        lastBeatThreshold = sensor_value;
-      }
-      else
-      {
-    	uint32_t beatDuration = currentBeat - lastBeat;
-        lastBeat = currentBeat;
-
-        float rawBPM = 0;
-        if(beatDuration > 0)
-          rawBPM = 60000.0 / (float)beatDuration;
-
-        valuesBPM[bpmIndex] = rawBPM;
-        valuesBPMSum = 0;
-
-        for(int i=0; i<PULSE_BPM_SAMPLE_SIZE; i++)
-        {
-          valuesBPMSum += valuesBPM[i];
-        }
+    	valuesBPM[bpmIndex] = currentBeatIndex;
+    	currentBeatIndex = 0;
 
         bpmIndex++;
-        bpmIndex = bpmIndex % PULSE_BPM_SAMPLE_SIZE;
 
-        if(valuesBPMCount < PULSE_BPM_SAMPLE_SIZE)
-          valuesBPMCount++;
+        if (bpmIndex >= PULSE_BPM_SAMPLE_SIZE){
+        	bpmIndex = 0;
+        	uint16_t medianIdx = getMedian(valuesBPM, (int)PULSE_BPM_SAMPLE_SIZE);
 
-        currentBPM = valuesBPMSum / valuesBPMCount;
-
+        	if(medianIdx > 0)
+        		currentBPM = (60.0 * MAX30102_SAMPLE_RATE) / medianIdx;
+        }
 
         currentPulseDetectorState = PULSE_TRACE_DOWN;
 
@@ -302,7 +306,6 @@ MAX30102 pulseOximeter_update(FIFO_LED_DATA m_fifoData)
 		/*float irDcValue*/ 0.0,
 		/*float redDcValue*/ 0.0,
 		/*float SaO2*/ currentSpO2Value,
-		/*uint32_t lastBeatThreshold*/ 0,
 		/*float dcFilteredIR*/ 0.0,
 		/*float dcFilteredRed*/ 0.0,
 		/*float temperature;*/ currentTemperature
@@ -346,7 +349,6 @@ MAX30102 pulseOximeter_update(FIFO_LED_DATA m_fifoData)
 	result.irCardiogram = lpbFilterIR.result;
 	result.irDcValue = dcFilterIR.w;
 	result.redDcValue = dcFilterRed.w;
-	result.lastBeatThreshold = lastBeatThreshold;
 	result.dcFilteredIR = dcFilterIR.result;
 	result.dcFilteredRed = dcFilterRed.result;
 

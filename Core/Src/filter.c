@@ -27,10 +27,10 @@ void lowPassButterworthFilter(float x, BUTTERWORTH_FILTER_T * filterResult)
 	filterResult->v[0] = filterResult->v[1];
 
     //Fs = 100Hz and Fc = 10Hz
-    filterResult->v[1] = (2.452372752527856026e-1 * x) + (0.50952544949442879485 * filterResult->v[0]);
+    //filterResult->v[1] = (2.452372752527856026e-1 * x) + (0.50952544949442879485 * filterResult->v[0]);
 
     //Fs = 100Hz and Fc = 4Hz
-    //filterResult->v[1] = (1.367287359973195227e-1 * x) + (0.72654252800536101020 * filterResult->v[0]); //Very precise butterworth filter
+    filterResult->v[1] = (1.367287359973195227e-1 * x) + (0.72654252800536101020 * filterResult->v[0]); //Very precise butterworth filter
 
     filterResult->result = filterResult->v[0] + filterResult->v[1];
 }

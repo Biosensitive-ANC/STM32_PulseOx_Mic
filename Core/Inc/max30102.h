@@ -24,14 +24,15 @@
 #define PULSE_MAX_THRESHOLD         2000//2000
 #define PULSE_GO_DOWN_THRESHOLD     1
 
-#define PULSE_BPM_SAMPLE_SIZE       10 //Moving average size
+#define PULSE_BPM_SAMPLE_SIZE       9 // Median window size
+#define MAX30102_SAMPLE_RATE 		100.0
 
 /* SpO2 parameters */
 #define RESET_SPO2_EVERY_N_PULSES     4
 
 /* Adjust RED LED current balancing*/
 #define MAGIC_ACCEPTABLE_INTENSITY_DIFF         10000
-#define RED_LED_CURRENT_ADJUSTMENT_MS           100
+#define RED_LED_CURRENT_ADJUSTMENT_MS           200
 
 
 
@@ -60,6 +61,7 @@
 #define BIT_SPO2_ADC_RGE 5
 #define BIT_SPO2_SR 2
 #define BIT_LED_PW 0
+#define BIT_SMP_AVG 5
 
 #define RED_LED	1
 #define IR_LED	2
