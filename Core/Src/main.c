@@ -44,6 +44,9 @@
 
 #define WINDOW_SIZE 10 // window size to average noise level
 #define DISP_REFRESH_MS 3000
+#define ADC_BUFFER_SIZE 8  // Over-sampling factor
+#define ADC_DC_FILT_COEFF 0.999 // gives -10dB @ 20hz with -20dB/decade roll-off at 40kHz f_sample
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -53,6 +56,7 @@
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
+DMA_HandleTypeDef hdma_adc1;
 
 I2C_HandleTypeDef hi2c1;
 
@@ -60,23 +64,33 @@ I2S_HandleTypeDef hi2s3;
 
 SPI_HandleTypeDef hspi1;
 
+TIM_HandleTypeDef htim1;
+
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
+long currentMillis = 0;
+long lastMillis = 0;
+
 char message[64];
 
 volatile uint8_t pulseOximiterIntFlag = 0;
+
+uint16_t adc_buffer[ADC_BUFFER_SIZE];
+int16_t adc_value = 0;
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_I2S3_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_ADC1_Init(void);
+static void MX_TIM1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -115,13 +129,16 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_I2C1_Init();
   MX_I2S3_Init();
   MX_SPI1_Init();
   MX_USART2_UART_Init();
   MX_USB_DEVICE_Init();
   MX_ADC1_Init();
+  MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
+
 
 	//uint8_t message[] = "Hello PC! STM32 is sending data...\r\n";
 
@@ -135,23 +152,16 @@ int main(void)
         OLED_ShowString(0, 0, "MAX30102 ERROR");
     }
 
-	long currentMillis = 0;
-	long lastMillis = 0;
-	long lastMillisMic = 0;
+    // enable DMA for microphone to record data
+	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buffer, ADC_BUFFER_SIZE); // cast to 32 because STM moment
 
-
-	currentMillis = millis();
-
-	uint32_t adcBuffer[WINDOW_SIZE] = {0};
-	uint32_t index = 0;
-	uint32_t sum = 0; // For rolling window
-	uint64_t sumOfSquares = 0;  // Stores sum of squares
-	char adc_msg[20]; // Buffer to hold the string
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+	currentMillis = millis();
+
 	while (1)
 	{
 
@@ -166,49 +176,12 @@ int main(void)
 		}
 
 
-
-		currentMillis = millis();
-		if( currentMillis - lastMillisMic > DISP_REFRESH_MS / WINDOW_SIZE)
-			{
-			// Microphone Stuff
-			// Read new ADC value
-			HAL_ADC_Start(&hadc1);  // Start ADC conversion
-			uint32_t newValue = 0;
-
-			if (HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY) == HAL_OK) {
-				newValue = HAL_ADC_GetValue(&hadc1);  // Read ADC value
-			}
-
-			HAL_ADC_Stop(&hadc1);  // Stop ADC to avoid unnecessary power usage
-
-			// Update rolling sum
-			sum -= adcBuffer[index];  // Remove oldest value
-			sumOfSquares -= adcBuffer[index] * adcBuffer[index];
-
-			adcBuffer[index] = newValue;  // Store new value
-			sum += newValue;  // Add new value to sum
-
-			// RMS
-			sumOfSquares += newValue * newValue; // Square the new value and add
-
-			// Update buffer index
-			index = (index + 1) % WINDOW_SIZE;
-
-			lastMillisMic = currentMillis;
-		}
-
-
-
-
 		// Display the data over the built in USB every 5 seconds
 		currentMillis = millis();
-
 		if( currentMillis - lastMillis > DISP_REFRESH_MS )
 		{
 			float bpm = MAX30102_getBPM();
 			float spo2 = MAX30102_getSPO2();
-			//sprintf(message, "HR: %.2f   SPO2: %.2f \n", bpm, spo2);
-			//CDC_Transmit_FS((uint8_t *)message, strlen(message));
 
 			HAL_GPIO_TogglePin(GPIOD, LD4_Pin | LD3_Pin | LD5_Pin | LD6_Pin);		//LED blinking
 
@@ -224,26 +197,14 @@ int main(void)
 			OLED_ShowString(0, 2, message);
 			//MAX30102_readTemperature();
 
-			// Compute moving average
-			uint32_t movingAvg = sum / WINDOW_SIZE;
-
-			// Compute RMS
-			uint32_t rmsValue = sqrt(sumOfSquares / WINDOW_SIZE);
-
 			// Display on OLED
-			sprintf(adc_msg, "Noise: %lu", movingAvg);
-			OLED_ShowString(0, 4, adc_msg);
+			sprintf(message, "Noise: %d    ", adc_value);
+			OLED_ShowString(0, 4, message);
 
-			sprintf(adc_msg, "RMS: %lu", rmsValue);
-			OLED_ShowString(0, 6, adc_msg);
 
 			HAL_GPIO_TogglePin(GPIOD, LD4_Pin | LD3_Pin | LD5_Pin | LD6_Pin);
 			lastMillis = currentMillis;
-
 		}
-
-
-
 
 
     /* USER CODE END WHILE */
@@ -322,14 +283,14 @@ static void MX_ADC1_Init(void)
   hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
   hadc1.Init.Resolution = ADC_RESOLUTION_12B;
   hadc1.Init.ScanConvMode = DISABLE;
-  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.ContinuousConvMode = ENABLE;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
   hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
   hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
   hadc1.Init.NbrOfConversion = 1;
-  hadc1.Init.DMAContinuousRequests = DISABLE;
-  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  hadc1.Init.DMAContinuousRequests = ENABLE;
+  hadc1.Init.EOCSelection = ADC_EOC_SEQ_CONV;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
   {
     Error_Handler();
@@ -339,7 +300,7 @@ static void MX_ADC1_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_1;
   sConfig.Rank = 1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+  sConfig.SamplingTime = ADC_SAMPLETIME_56CYCLES;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -437,7 +398,7 @@ static void MX_SPI1_Init(void)
   hspi1.Instance = SPI1;
   hspi1.Init.Mode = SPI_MODE_MASTER;
   hspi1.Init.Direction = SPI_DIRECTION_2LINES;
-  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi1.Init.DataSize = SPI_DATASIZE_16BIT;
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
@@ -453,6 +414,81 @@ static void MX_SPI1_Init(void)
   /* USER CODE BEGIN SPI1_Init 2 */
 
   /* USER CODE END SPI1_Init 2 */
+
+}
+
+/**
+  * @brief TIM1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM1_Init(void)
+{
+
+  /* USER CODE BEGIN TIM1_Init 0 */
+
+  /* USER CODE END TIM1_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
+
+  /* USER CODE BEGIN TIM1_Init 1 */
+
+  /* USER CODE END TIM1_Init 1 */
+  htim1.Instance = TIM1;
+  htim1.Init.Prescaler = 54;
+  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim1.Init.Period = 0xffff;
+  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim1.Init.RepetitionCounter = 0;
+  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_OC_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_TIMING;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
+  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+  if (HAL_TIM_OC_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
+  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
+  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
+  sBreakDeadTimeConfig.DeadTime = 0;
+  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
+  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
+  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
+  if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM1_Init 2 */
+
+  /* USER CODE END TIM1_Init 2 */
+  HAL_TIM_MspPostInit(&htim1);
 
 }
 
@@ -490,6 +526,22 @@ static void MX_USART2_UART_Init(void)
 }
 
 /**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA2_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA2_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -515,6 +567,9 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(OTG_FS_PowerSwitchOn_GPIO_Port, OTG_FS_PowerSwitchOn_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(ADC_debug_GPIO_Port, ADC_debug_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOD, LD4_Pin|LD3_Pin|LD5_Pin|LD6_Pin
                           |Audio_RST_Pin, GPIO_PIN_RESET);
 
@@ -531,6 +586,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(OTG_FS_PowerSwitchOn_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : ADC_debug_Pin */
+  GPIO_InitStruct.Pin = ADC_debug_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  HAL_GPIO_Init(ADC_debug_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PDM_OUT_Pin */
   GPIO_InitStruct.Pin = PDM_OUT_Pin;
@@ -597,6 +659,29 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 		pulseOximiterIntFlag = 1;
 	}
 }
+
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc) {
+	static float adc1_dc = 0.0;
+	static uint16_t adc_sum = 0;
+
+
+    if (hadc->Instance == ADC1) {
+    	// get adc reading sum
+        adc_sum = 0;
+        for (int i = 0; i < ADC_BUFFER_SIZE; i++) {
+            adc_sum += adc_buffer[i];
+        }
+
+    	adc1_dc = ADC_DC_FILT_COEFF * adc1_dc + (1-ADC_DC_FILT_COEFF) * adc_sum; // calculate dc offset
+
+    	adc_value = adc_sum - (uint16_t)adc1_dc; // remove dc offset from sum
+
+        HAL_GPIO_TogglePin(ADC_debug_GPIO_Port, ADC_debug_Pin);  // Toggle the ADC_debug pin
+
+        // add DMA command for spi here? or maybe do it some other way
+    }
+}
+
 /* USER CODE END 4 */
 
 /**
