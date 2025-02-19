@@ -81,15 +81,13 @@ uint8_t MAX30102_Init(void) {
 
     // Configure SPO2 mode
     MAX30102_WriteRegister(REG_MODE_CONFIG, 0b011 << BIT_MODE);  // Use heart rate mode only (or 0x07 to enable SPO2)
-    uint8_t spo2_bits = (0b01 << BIT_SPO2_ADC_RGE) |  (0b001 << BIT_SPO2_SR) | (0b01 << BIT_LED_PW); //pw of 11 browns out supply
+    uint8_t spo2_bits = (0b01 << BIT_SPO2_ADC_RGE) |  (0b000 << BIT_SPO2_SR) | (0b01 << BIT_LED_PW); //pw of 11 browns out supply
     MAX30102_WriteRegister(REG_SPO2_CONFIG, spo2_bits);  // Set ADC range and sampling rate
 
     // Set LED brightness (0x24 represents medium brightness, adjustable)
     redLEDCurrent = 50;
     MAX30102_setLedCurrent(RED_LED, redLEDCurrent);
     MAX30102_setLedCurrent(IR_LED, redLEDCurrent);
-    //MAX30102_WriteRegister(REG_LED1_PA, 0x24);  // LED1 (Red)
-    //MAX30102_WriteRegister(REG_LED2_PA, 0x24);  // LED2 (Infrared)
 
     // interrupts
     MAX30102_WriteRegister(REG_FIFO_CONFIG, (0b000 << BIT_SMP_AVG) | ((32 - MAX30102_SAMPLES_PER_BURST) << BIT_FIFO_A_FULL_VAL)); // max value is 15 min is 0
@@ -198,18 +196,8 @@ double getMedian(int arr[], int size) {
     // Sort the array
     qsort(arr, size, sizeof(int), compare);
 
-    return arr[size / 2];
+    return arr[size - 1 - 3];
 }
-/*
-int main() {
-    int arr[] = {7, 2, 5, 10, 4};
-    int size = sizeof(arr) / sizeof(arr[0]);
-
-    double median = getMedian(arr, size);
-    printf("Median: %.2f\n", median);
-
-    return 0;
-}*/
 
 
 bool detectPulse(float sensor_value)
@@ -240,7 +228,7 @@ bool detectPulse(float sensor_value)
     case PULSE_TRACE_UP:
       if (!(sensor_value > prev_sensor_value))
       {
-    	valuesBPM[bpmIndex] = currentBeatIndex;
+    	if (currentBeatIndex > 0) valuesBPM[bpmIndex] = currentBeatIndex;
     	currentBeatIndex = 0;
 
         bpmIndex++;

@@ -24,8 +24,8 @@
 #define PULSE_MAX_THRESHOLD         2000//2000
 #define PULSE_GO_DOWN_THRESHOLD     1
 
-#define PULSE_BPM_SAMPLE_SIZE       9 // Median window size
-#define MAX30102_SAMPLE_RATE 		100.0
+#define PULSE_BPM_SAMPLE_SIZE       10 // Median window size
+#define MAX30102_SAMPLE_RATE 		50.0
 
 /* SpO2 parameters */
 #define RESET_SPO2_EVERY_N_PULSES     4

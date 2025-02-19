@@ -23,8 +23,6 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "usbd_cdc_if.h"
-#include "oled.h"
-#include "string.h"
 #include "system.h"
 #include "max30102.h"
 
@@ -43,7 +41,7 @@
 #define SPO2_SAMPLES_TO_KEEP 1 // maybe just average processed data (moving average)
 
 #define WINDOW_SIZE 10 // window size to average noise level
-#define DISP_REFRESH_MS 3000
+#define SEND_PULSEOX_PERIOD_MS 1000
 #define MIC_OVERSAMPLING 4 // number of samples averaged into a single sample
 #define ADC_DC_FILT_COEFF 0.999 // gives -10dB @ 20hz with -20dB/decade roll-off at 40kHz f_sample
 
@@ -65,18 +63,18 @@ DMA_HandleTypeDef hdma_spi2_tx;
 
 TIM_HandleTypeDef htim2;
 
-UART_HandleTypeDef huart2;
+UART_HandleTypeDef huart4;
 
 /* USER CODE BEGIN PV */
 long currentMillis = 0;
 long lastMillis = 0;
 
-char message[64];
-
 volatile uint8_t pulseOximiterIntFlag = 0;
 
 uint16_t adc_buffer[2 * MIC_OVERSAMPLING] = {0};
 volatile int16_t audio_tx_buffer[2] = {0};  // I2S DMA transmit buffer, one for each microphone
+
+uint8_t txBuffer[2] = {0}; // uart buffer for the heart rate transmission to the rpi
 
 
 /* USER CODE END PV */
@@ -86,10 +84,10 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_I2C1_Init(void);
-static void MX_USART2_UART_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_I2S2_Init(void);
 static void MX_TIM2_Init(void);
+static void MX_UART4_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -130,24 +128,14 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_I2C1_Init();
-  MX_USART2_UART_Init();
   MX_USB_DEVICE_Init();
   MX_ADC1_Init();
   MX_I2S2_Init();
   MX_TIM2_Init();
+  MX_UART4_Init();
   /* USER CODE BEGIN 2 */
 
-
-  	/*
-	OLED_Init();                // Initialize the OLED display
-	OLED_Clear();               // Clear the OLED screen
-	HAL_Delay(100);
-  	*/
-    if (MAX30102_Init() != HAL_OK) {
-        OLED_ShowString(0, 0, "MAX30102 OK");
-    } else {
-        OLED_ShowString(0, 0, "MAX30102 ERROR");
-    }
+    MAX30102_Init(); // configure the heart rate sensor
 
     HAL_TIM_Base_Start(&htim2); // enable microphone sample timer
 
@@ -163,7 +151,6 @@ int main(void)
 
 	while (1)
 	{
-
 		if( pulseOximiterIntFlag )
 		{
 			if (MAX30102_DumpFifo() == HAL_OK) {
@@ -174,29 +161,28 @@ int main(void)
 			}
 		}
 
-
 		// Display the data over the built in USB every 5 seconds
 		currentMillis = millis();
-		if( currentMillis - lastMillis > DISP_REFRESH_MS )
+		if( currentMillis - lastMillis > SEND_PULSEOX_PERIOD_MS )
 		{
 			float bpm = MAX30102_getBPM();
 			float spo2 = MAX30102_getSPO2();
 
-			HAL_GPIO_TogglePin(GPIOD, LD4_Pin | LD3_Pin | LD5_Pin | LD6_Pin);		//LED blinking
+			// Convert BPM to 8-bit integer
+			if (bpm > 255.0f) bpm = 255.0f;
+			txBuffer[0] = (uint8_t)bpm;
 
-			sprintf(message, "BPM: %.2f     ", bpm);
-			OLED_ShowString(0, 0, message);
+			// Convert SpO2 to 8-bit integer with range mapping (90%-100%)
+			if (spo2 < 90.0f) spo2 = 90.0f;
+			if (spo2 > 100.0f) spo2 = 100.0f;
+			txBuffer[1] = (uint8_t)((spo2 - 90.0f) * 255.0f / 10.0f);
 
-
-			sprintf(message, "SpO2: %.2f     ", spo2);
-			OLED_ShowString(0, 2, message);
-
+			// Transmit the data over UART
+			HAL_UART_Transmit(&huart4, txBuffer, 2, HAL_MAX_DELAY);
 
 			HAL_GPIO_TogglePin(GPIOD, LD4_Pin | LD3_Pin | LD5_Pin | LD6_Pin);
 			lastMillis = currentMillis;
 		}
-
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -326,7 +312,7 @@ static void MX_I2C1_Init(void)
 
   /* USER CODE END I2C1_Init 1 */
   hi2c1.Instance = I2C1;
-  hi2c1.Init.ClockSpeed = 100000;
+  hi2c1.Init.ClockSpeed = 400000;
   hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
   hi2c1.Init.OwnAddress1 = 0;
   hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
@@ -437,35 +423,35 @@ static void MX_TIM2_Init(void)
 }
 
 /**
-  * @brief USART2 Initialization Function
+  * @brief UART4 Initialization Function
   * @param None
   * @retval None
   */
-static void MX_USART2_UART_Init(void)
+static void MX_UART4_Init(void)
 {
 
-  /* USER CODE BEGIN USART2_Init 0 */
+  /* USER CODE BEGIN UART4_Init 0 */
 
-  /* USER CODE END USART2_Init 0 */
+  /* USER CODE END UART4_Init 0 */
 
-  /* USER CODE BEGIN USART2_Init 1 */
+  /* USER CODE BEGIN UART4_Init 1 */
 
-  /* USER CODE END USART2_Init 1 */
-  huart2.Instance = USART2;
-  huart2.Init.BaudRate = 115200;
-  huart2.Init.WordLength = UART_WORDLENGTH_8B;
-  huart2.Init.StopBits = UART_STOPBITS_1;
-  huart2.Init.Parity = UART_PARITY_NONE;
-  huart2.Init.Mode = UART_MODE_TX_RX;
-  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
-  if (HAL_UART_Init(&huart2) != HAL_OK)
+  /* USER CODE END UART4_Init 1 */
+  huart4.Instance = UART4;
+  huart4.Init.BaudRate = 9600;
+  huart4.Init.WordLength = UART_WORDLENGTH_8B;
+  huart4.Init.StopBits = UART_STOPBITS_1;
+  huart4.Init.Parity = UART_PARITY_NONE;
+  huart4.Init.Mode = UART_MODE_TX_RX;
+  huart4.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart4.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart4) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN USART2_Init 2 */
+  /* USER CODE BEGIN UART4_Init 2 */
 
-  /* USER CODE END USART2_Init 2 */
+  /* USER CODE END UART4_Init 2 */
 
 }
 
@@ -578,14 +564,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : I2S3_MCK_Pin I2S3_SCK_Pin I2S3_SD_Pin */
-  GPIO_InitStruct.Pin = I2S3_MCK_Pin|I2S3_SCK_Pin|I2S3_SD_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF6_SPI3;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pin : OTG_FS_OverCurrent_Pin */
   GPIO_InitStruct.Pin = OTG_FS_OverCurrent_Pin;
