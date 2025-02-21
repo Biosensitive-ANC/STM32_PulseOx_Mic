@@ -42,7 +42,8 @@
 
 #define WINDOW_SIZE 10 // window size to average noise level
 #define SEND_PULSEOX_PERIOD_MS 1000
-#define MIC_OVERSAMPLING 4 // number of samples averaged into a single sample
+
+#define MIC_OVERSAMPLING 8 // number of samples averaged into a single sample
 #define ADC_DC_FILT_COEFF 0.999 // gives -10dB @ 20hz with -20dB/decade roll-off at 40kHz f_sample
 
 /* USER CODE END PD */
@@ -137,11 +138,18 @@ int main(void)
 
     MAX30102_Init(); // configure the heart rate sensor
 
-    HAL_TIM_Base_Start(&htim2); // enable microphone sample timer
+    //HAL_TIM_Base_Start(&htim2); // enable microphone sample timer
 
     // enable DMA for microphone to record data
-	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buffer, 2 * MIC_OVERSAMPLING); // cast to 32 because STM moment
+	//HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buffer, 2 * MIC_OVERSAMPLING); // cast to 32 because STM moment
+	//HAL_I2S_Transmit_DMA(&hi2s2, (uint16_t*)audio_tx_buffer, 2);
+    // Ensure an integer number of periods fits into the buffer
+
+    HAL_TIM_Base_Start(&htim2); // enable microphone sample timer
+
+    HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buffer, 2 * MIC_OVERSAMPLING); // cast to 32 because STM moment
 	HAL_I2S_Transmit_DMA(&hi2s2, (uint16_t*)audio_tx_buffer, 2);
+
 
   /* USER CODE END 2 */
 
@@ -348,7 +356,7 @@ static void MX_I2S2_Init(void)
   hi2s2.Instance = SPI2;
   hi2s2.Init.Mode = I2S_MODE_MASTER_TX;
   hi2s2.Init.Standard = I2S_STANDARD_PHILIPS;
-  hi2s2.Init.DataFormat = I2S_DATAFORMAT_16B;
+  hi2s2.Init.DataFormat = I2S_DATAFORMAT_16B_EXTENDED;
   hi2s2.Init.MCLKOutput = I2S_MCLKOUTPUT_DISABLE;
   hi2s2.Init.AudioFreq = I2S_AUDIOFREQ_48K;
   hi2s2.Init.CPOL = I2S_CPOL_LOW;
@@ -384,9 +392,9 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 1;
+  htim2.Init.Prescaler = 0;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 218;
+  htim2.Init.Period = 439;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -608,6 +616,8 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc) {
 			adc_sum_left += adc_buffer[2*i];
 			adc_sum_right += adc_buffer[2*i + 1];
 		}
+		adc_sum_left = adc_buffer[0] * 4;
+		adc_sum_right = adc_buffer[1] * 4;
 
 		adc_dc_left 	= ADC_DC_FILT_COEFF * adc_dc_left 	+ (1-ADC_DC_FILT_COEFF) * adc_sum_left; // calculate dc offset
 		adc_dc_right 	= ADC_DC_FILT_COEFF * adc_dc_right 	+ (1-ADC_DC_FILT_COEFF) * adc_sum_right; // calculate dc offset
@@ -615,7 +625,11 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc) {
 		audio_tx_buffer[0] = (int16_t)(adc_dc_left - adc_sum_left); // remove dc offset from sum and invert
 		audio_tx_buffer[1] = (int16_t)(adc_dc_right - adc_sum_right); // remove dc offset from sum and invert
 	}
+
+	HAL_GPIO_TogglePin(GPIOC, ADC_debug_Pin);
 }
+
+
 
 /* USER CODE END 4 */
 
