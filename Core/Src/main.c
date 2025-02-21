@@ -55,7 +55,9 @@
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
+ADC_HandleTypeDef hadc2;
 DMA_HandleTypeDef hdma_adc1;
+DMA_HandleTypeDef hdma_adc2;
 
 I2C_HandleTypeDef hi2c1;
 
@@ -64,7 +66,7 @@ DMA_HandleTypeDef hdma_spi2_tx;
 
 TIM_HandleTypeDef htim2;
 
-UART_HandleTypeDef huart4;
+UART_HandleTypeDef huart5;
 
 /* USER CODE BEGIN PV */
 long currentMillis = 0;
@@ -72,7 +74,9 @@ long lastMillis = 0;
 
 volatile uint8_t pulseOximiterIntFlag = 0;
 
-uint16_t adc_buffer[2 * MIC_OVERSAMPLING] = {0};
+uint16_t adc1_buffer[MIC_OVERSAMPLING] = {0};
+uint16_t adc2_buffer[MIC_OVERSAMPLING] = {0};
+
 volatile int16_t audio_tx_buffer[2] = {0};  // I2S DMA transmit buffer, one for each microphone
 
 uint8_t txBuffer[2] = {0}; // uart buffer for the heart rate transmission to the rpi
@@ -86,9 +90,10 @@ static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_ADC1_Init(void);
-static void MX_I2S2_Init(void);
 static void MX_TIM2_Init(void);
-static void MX_UART4_Init(void);
+static void MX_ADC2_Init(void);
+static void MX_UART5_Init(void);
+static void MX_I2S2_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -131,9 +136,10 @@ int main(void)
   MX_I2C1_Init();
   MX_USB_DEVICE_Init();
   MX_ADC1_Init();
-  MX_I2S2_Init();
   MX_TIM2_Init();
-  MX_UART4_Init();
+  MX_ADC2_Init();
+  MX_UART5_Init();
+  MX_I2S2_Init();
   /* USER CODE BEGIN 2 */
 
     MAX30102_Init(); // configure the heart rate sensor
@@ -147,7 +153,9 @@ int main(void)
 
     HAL_TIM_Base_Start(&htim2); // enable microphone sample timer
 
-    HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buffer, 2 * MIC_OVERSAMPLING); // cast to 32 because STM moment
+    HAL_ADC_Start_DMA(&hadc2, (uint32_t*)adc2_buffer, MIC_OVERSAMPLING); // cast to 32 because STM moment
+    HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, MIC_OVERSAMPLING); // cast to 32 because STM moment
+
 	HAL_I2S_Transmit_DMA(&hi2s2, (uint16_t*)audio_tx_buffer, 2);
 
 
@@ -186,7 +194,7 @@ int main(void)
 			txBuffer[1] = (uint8_t)((spo2 - 90.0f) * 255.0f / 10.0f);
 
 			// Transmit the data over UART
-			HAL_UART_Transmit(&huart4, txBuffer, 2, HAL_MAX_DELAY);
+			HAL_UART_Transmit(&huart5, txBuffer, 2, HAL_MAX_DELAY);
 
 			HAL_GPIO_TogglePin(GPIOD, LD4_Pin | LD3_Pin | LD5_Pin | LD6_Pin);
 			lastMillis = currentMillis;
@@ -266,13 +274,13 @@ static void MX_ADC1_Init(void)
   hadc1.Instance = ADC1;
   hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
   hadc1.Init.Resolution = ADC_RESOLUTION_12B;
-  hadc1.Init.ScanConvMode = ENABLE;
+  hadc1.Init.ScanConvMode = DISABLE;
   hadc1.Init.ContinuousConvMode = DISABLE;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
   hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
   hadc1.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T2_TRGO;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.NbrOfConversion = 2;
+  hadc1.Init.NbrOfConversion = 1;
   hadc1.Init.DMAContinuousRequests = ENABLE;
   hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
@@ -289,18 +297,61 @@ static void MX_ADC1_Init(void)
   {
     Error_Handler();
   }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
+}
+
+/**
+  * @brief ADC2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC2_Init(void)
+{
+
+  /* USER CODE BEGIN ADC2_Init 0 */
+
+  /* USER CODE END ADC2_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC2_Init 1 */
+
+  /* USER CODE END ADC2_Init 1 */
+
+  /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
+  */
+  hadc2.Instance = ADC2;
+  hadc2.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+  hadc2.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc2.Init.ScanConvMode = DISABLE;
+  hadc2.Init.ContinuousConvMode = DISABLE;
+  hadc2.Init.DiscontinuousConvMode = DISABLE;
+  hadc2.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
+  hadc2.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T2_TRGO;
+  hadc2.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc2.Init.NbrOfConversion = 1;
+  hadc2.Init.DMAContinuousRequests = ENABLE;
+  hadc2.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  if (HAL_ADC_Init(&hadc2) != HAL_OK)
+  {
+    Error_Handler();
+  }
 
   /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
   */
   sConfig.Channel = ADC_CHANNEL_1;
-  sConfig.Rank = 2;
-  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  sConfig.Rank = 1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_28CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc2, &sConfig) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN ADC1_Init 2 */
+  /* USER CODE BEGIN ADC2_Init 2 */
 
-  /* USER CODE END ADC1_Init 2 */
+  /* USER CODE END ADC2_Init 2 */
 
 }
 
@@ -392,9 +443,9 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 0;
+  htim2.Init.Prescaler = 2;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 439;
+  htim2.Init.Period = 72;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -431,35 +482,35 @@ static void MX_TIM2_Init(void)
 }
 
 /**
-  * @brief UART4 Initialization Function
+  * @brief UART5 Initialization Function
   * @param None
   * @retval None
   */
-static void MX_UART4_Init(void)
+static void MX_UART5_Init(void)
 {
 
-  /* USER CODE BEGIN UART4_Init 0 */
+  /* USER CODE BEGIN UART5_Init 0 */
 
-  /* USER CODE END UART4_Init 0 */
+  /* USER CODE END UART5_Init 0 */
 
-  /* USER CODE BEGIN UART4_Init 1 */
+  /* USER CODE BEGIN UART5_Init 1 */
 
-  /* USER CODE END UART4_Init 1 */
-  huart4.Instance = UART4;
-  huart4.Init.BaudRate = 9600;
-  huart4.Init.WordLength = UART_WORDLENGTH_8B;
-  huart4.Init.StopBits = UART_STOPBITS_1;
-  huart4.Init.Parity = UART_PARITY_NONE;
-  huart4.Init.Mode = UART_MODE_TX_RX;
-  huart4.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart4.Init.OverSampling = UART_OVERSAMPLING_16;
-  if (HAL_UART_Init(&huart4) != HAL_OK)
+  /* USER CODE END UART5_Init 1 */
+  huart5.Instance = UART5;
+  huart5.Init.BaudRate = 115200;
+  huart5.Init.WordLength = UART_WORDLENGTH_8B;
+  huart5.Init.StopBits = UART_STOPBITS_1;
+  huart5.Init.Parity = UART_PARITY_NONE;
+  huart5.Init.Mode = UART_MODE_TX_RX;
+  huart5.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart5.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart5) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN UART4_Init 2 */
+  /* USER CODE BEGIN UART5_Init 2 */
 
-  /* USER CODE END UART4_Init 2 */
+  /* USER CODE END UART5_Init 2 */
 
 }
 
@@ -480,6 +531,9 @@ static void MX_DMA_Init(void)
   /* DMA2_Stream0_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
+  /* DMA2_Stream2_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
 
 }
 
@@ -535,22 +589,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
   HAL_GPIO_Init(ADC_debug_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : I2S3_WS_Pin */
-  GPIO_InitStruct.Pin = I2S3_WS_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF6_SPI3;
-  HAL_GPIO_Init(I2S3_WS_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : SPI1_SCK_Pin SPI1_MISO_Pin SPI1_MOSI_Pin */
-  GPIO_InitStruct.Pin = SPI1_SCK_Pin|SPI1_MISO_Pin|SPI1_MOSI_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF5_SPI1;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pin : Pulse_Oximeter_Int_Pin */
   GPIO_InitStruct.Pin = Pulse_Oximeter_Int_Pin;
@@ -610,23 +648,31 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc) {
 
 	if (hadc->Instance == ADC1) {
 		adc_sum_left = 0;
+
+		for (int i = 0; i < MIC_OVERSAMPLING; i++) {
+			adc_sum_left += adc1_buffer[i];
+		}
+
+		adc_dc_left 	= ADC_DC_FILT_COEFF * adc_dc_left 	+ (1-ADC_DC_FILT_COEFF) * adc_sum_left; // calculate dc offset
+
+		audio_tx_buffer[0] = (int16_t)(adc_dc_left - adc_sum_left); // remove dc offset from sum and invert
+
+		//HAL_GPIO_TogglePin(GPIOC, ADC_debug_Pin);
+	}
+
+	if (hadc->Instance == ADC2) {
 		adc_sum_right = 0;
 
 		for (int i = 0; i < MIC_OVERSAMPLING; i++) {
-			adc_sum_left += adc_buffer[2*i];
-			adc_sum_right += adc_buffer[2*i + 1];
+			adc_sum_right += adc2_buffer[i];
 		}
-		adc_sum_left = adc_buffer[0] * 4;
-		adc_sum_right = adc_buffer[1] * 4;
 
-		adc_dc_left 	= ADC_DC_FILT_COEFF * adc_dc_left 	+ (1-ADC_DC_FILT_COEFF) * adc_sum_left; // calculate dc offset
 		adc_dc_right 	= ADC_DC_FILT_COEFF * adc_dc_right 	+ (1-ADC_DC_FILT_COEFF) * adc_sum_right; // calculate dc offset
 
-		audio_tx_buffer[0] = (int16_t)(adc_dc_left - adc_sum_left); // remove dc offset from sum and invert
 		audio_tx_buffer[1] = (int16_t)(adc_dc_right - adc_sum_right); // remove dc offset from sum and invert
-	}
 
-	HAL_GPIO_TogglePin(GPIOC, ADC_debug_Pin);
+		//HAL_GPIO_TogglePin(GPIOC, ADC_debug_Pin);
+	}
 }
 
 
